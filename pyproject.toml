@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "easymode-torch"
+version = "0.0.1"
+description = "PyTorch inference for easymode pretrained segmentation networks"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "Mart Last", email = "mgflast@gmail.com" }
+]
+keywords = [
+    "cryo-electron tomography",
+    "cryoET",
+    "deep learning",
+    "segmentation",
+    "pytorch",
+]
+
+dependencies = [
+    "torch>=2.0",
+    "mrcfile",
+    "numpy",
+    "scipy",
+    "huggingface_hub",
+    "h5py",
+    "requests",
+]
+
+[project.urls]
+homepage = "https://github.com/mgflast/easymode-torch"
+repository = "https://github.com/mgflast/easymode-torch"
+
+[dependency-groups]
+dev = ["pytest>=7.0", "ipython"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
