@@ -1,0 +1,64 @@
+"""CLI for easymode-torch."""
+
+import argparse
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="easymode-torch: PyTorch inference for easymode pretrained segmentation networks."
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+
+    subparsers.add_parser('list', help='List available pretrained segmentation models.')
+
+    seg = subparsers.add_parser('segment', help='Segment tomograms using pretrained easymode networks.')
+    seg.add_argument("features", metavar='FEATURE', nargs="+", type=str,
+                     help="One or more features to segment (e.g. 'ribosome membrane microtubule'). Use 'easymode-torch list' to see available features.")
+    seg.add_argument("--data", nargs="+", type=str, required=True,
+                     help="One or more directories, file paths, or glob patterns.")
+    seg.add_argument("--tta", type=int, default=4,
+                     help="Test-time augmentation factor, 1-16. Higher = better but slower. (default: 4)")
+    seg.add_argument("--output", type=str, default="segmented",
+                     help="Output directory (default: ./segmented/)")
+    seg.add_argument("--overwrite", action='store_true',
+                     help="Overwrite existing segmentations.")
+    seg.add_argument("--batch", type=int, default=1,
+                     help="Batch size for tile processing (default: 1).")
+    seg.add_argument("--gpu", type=int, default=None,
+                     help="GPU device ID (default: auto-select).")
+    seg.add_argument("--apix", type=float, default=None,
+                     help="Override the pixel size from the .mrc header (Å/px).")
+    seg.add_argument("--use_depth", type=float, default=1.0,
+                     help="Fraction of Z range to process, 0.0-1.0 (default: 1.0).")
+    seg.add_argument("--xy_margin", type=int, default=0,
+                     help="Pixels to crop from XY edges (default: 0).")
+
+    args = parser.parse_args()
+
+    if args.command == 'list':
+        from ._distribution import list_models
+        list_models()
+
+    elif args.command == 'segment':
+        from . import segment
+        features = [f.lower() for f in args.features]
+        for feature in features:
+            segment(
+                feature=feature,
+                data_directory=args.data,
+                output_directory=args.output,
+                tta=args.tta,
+                batch_size=args.batch,
+                input_apix=args.apix,
+                gpu=args.gpu,
+                overwrite=args.overwrite,
+                use_depth=args.use_depth,
+                xy_margin=args.xy_margin,
+            )
+
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

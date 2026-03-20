@@ -31,6 +31,9 @@ dependencies = [
     "scikit-image",
 ]
 
+[project.scripts]
+easymode-torch = "easymode_torch._cli:main"
+
 [project.urls]
 homepage = "https://github.com/mgflast/easymode-torch"
 repository = "https://github.com/mgflast/easymode-torch"
