@@ -46,6 +46,8 @@ def segment(
     gpu=None,
     overwrite=False,
     silent=False,
+    use_depth=1.0,
+    xy_margin=0,
 ):
     """Segment tomograms using a pretrained easymode model.
 
@@ -71,6 +73,10 @@ def segment(
         Re-segment tomograms that already have output files.
     silent : bool
         Suppress progress output.
+    use_depth : float
+        Fraction of the Z range to segment (0.0–1.0). Default 1.0 = full volume.
+    xy_margin : int
+        Pixels to crop from XY edges before segmenting (in original coords).
     """
     from ._inference import segment_tomogram
 
@@ -126,6 +132,7 @@ def segment(
             tta=tta, batch_size=batch_size,
             model_apix=model_apix, input_apix=input_apix,
             model_apix_z=model_apix_z,
+            use_depth=use_depth, xy_margin=xy_margin,
         )
         _save_mrc(seg, out_path, apix)
 

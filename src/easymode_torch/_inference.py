@@ -5,14 +5,14 @@ test-time augmentation, but running in PyTorch instead of TensorFlow.
 """
 
 import gc
-from pathlib import Path
 
 import mrcfile
 import numpy as np
 import torch
+from skimage.transform import resize
 
-TILE_SIZE = (128, 256, 256)
-OVERLAP = (32, 32, 32)
+TILE_SIZE = (160, 256, 256)
+OVERLAP = (48, 32, 32)
 
 
 # ---------------------------------------------------------------------------
@@ -87,15 +87,12 @@ def _pad_volume(volume, min_pad=16, div=32):
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def _run_tiles(tiles, model, device, batch_size=2):
-    """Run model on a batch of numpy tiles, return numpy results."""
-    # tiles: (N, D, H, W) -> add channel dim -> (N, 1, D, H, W)
+def _run_tiles(tiles, model, device):
+    """Run model on tiles one at a time, return numpy results."""
     results = []
-    n = len(tiles)
-    for i in range(0, n, batch_size):
-        chunk = tiles[i:i + batch_size]
-        t = torch.from_numpy(chunk[:, np.newaxis]).float().to(device)
-        out = model(t)                          # (B, 1, D, H, W)
+    for i in range(len(tiles)):
+        t = torch.from_numpy(tiles[i:i + 1, np.newaxis]).float().to(device)
+        out = model(t)  # (1, 1, D, H, W)
         results.append(out.squeeze(1).cpu().numpy())
         del t, out
     if torch.cuda.is_available():
@@ -109,7 +106,8 @@ def _run_tiles(tiles, model, device, batch_size=2):
 # ---------------------------------------------------------------------------
 
 def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
-                     model_apix=10.0, input_apix=None, model_apix_z=None):
+                     model_apix=10.0, input_apix=None, model_apix_z=None,
+                     use_depth=1.0, xy_margin=0):
     """Segment a single tomogram using a loaded PyTorch model.
 
     Parameters
@@ -127,6 +125,10 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
         Override pixel size from MRC header
     model_apix_z : float or None
         Z pixel size if model is anisotropic; None = same as model_apix
+    use_depth : float
+        Fraction of Z range to process (0.0–1.0). Default 1.0 = full volume.
+    xy_margin : int
+        Number of pixels to crop from XY edges (in original coords).
 
     Returns
     -------
@@ -148,10 +150,15 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
     scale_xy = apix_xy / model_apix
     scale_z = apix_xy / model_apix_z
 
+    # Rescale to model pixel size
     rescaled = False
     if abs(scale_xy - 1.0) > 0.05 or abs(scale_z - 1.0) > 0.05:
-        from scipy.ndimage import zoom
-        volume = zoom(volume, (scale_z, scale_xy, scale_xy), order=1)
+        new_size = [
+            int(np.round(scale_z * oj)),
+            int(np.round(scale_xy * ok)),
+            int(np.round(scale_xy * ol)),
+        ]
+        volume = resize(volume, new_size, order=3, anti_aliasing=True).astype(np.float32)
         rescaled = True
 
     # Normalize
@@ -161,7 +168,25 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
     volume -= np.mean(volume[:, km:-km, lm:-lm])
     volume /= np.std(volume[:, km:-km, lm:-lm]) + 1e-7
 
+    # Compute active Z range
+    n_z = volume.shape[0]
+    z_margin = int(n_z * (1.0 - use_depth) / 2) if n_z * use_depth >= 32 else 0
+    z_start_r, z_end_r = z_margin, n_z - z_margin
+    z_start = int(oj * (1.0 - use_depth) / 2) if z_margin > 0 else 0
+    z_end = oj - z_start
+
+    # Compute XY margin in rescaled coords
+    xy_margin_r = int(xy_margin * (volume.shape[1] / ok)) if xy_margin > 0 and ok >= xy_margin * 5 and ol >= xy_margin * 5 else 0
+    xy_margin = xy_margin if xy_margin_r > 0 else 0
+
+    volume = volume[
+        z_start_r:z_end_r,
+        xy_margin_r:volume.shape[1] - xy_margin_r if xy_margin_r else volume.shape[1],
+        xy_margin_r:volume.shape[2] - xy_margin_r if xy_margin_r else volume.shape[2],
+    ]
+
     volume, padding = _pad_volume(volume)
+    segmented_volume = np.zeros((oj, ok, ol), dtype=np.float32)
 
     tile_size = (
         min(256, volume.shape[0]),
@@ -175,8 +200,6 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
     k_fx = [0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]
     k_yz = [0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1]
 
-    seg_accum = np.zeros((oj, ok, ol), dtype=np.float32)
-
     for j in range(tta):
         aug = volume.copy()
         aug = np.rot90(aug, k=k_xy[j], axes=(1, 2))
@@ -185,7 +208,7 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
         aug = np.rot90(aug, k=2 * k_yz[j], axes=(0, 1))
 
         tiles, positions, orig_shape = _tile_volume(aug, tile_size, overlap)
-        seg_tiles = _run_tiles(tiles, model, device, batch_size)
+        seg_tiles = _run_tiles(tiles, model, device)
         seg_aug = _detile_volume(seg_tiles, positions, orig_shape, tile_size, overlap)
 
         # Undo augmentation
@@ -199,11 +222,18 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
         seg_aug = seg_aug[j0:seg_aug.shape[0] - j1, k0:seg_aug.shape[1] - k1, l0:seg_aug.shape[2] - l1]
 
         if rescaled:
-            from scipy.ndimage import zoom as zoom_
-            sj, sk, sl = seg_aug.shape
-            seg_aug = zoom_(seg_aug, (oj / sj, ok / sk, ol / sl), order=1)
-            seg_aug = seg_aug[:oj, :ok, :ol]
+            seg_aug = resize(
+                seg_aug,
+                (z_end - z_start, ok - 2 * xy_margin, ol - 2 * xy_margin),
+                order=1,
+            )
+            seg_aug = seg_aug[:z_end - z_start, :ok - 2 * xy_margin, :ol - 2 * xy_margin]
 
-        seg_accum += seg_aug
+        segmented_volume[
+            z_start:z_end,
+            xy_margin:ok - xy_margin if xy_margin else ok,
+            xy_margin:ol - xy_margin if xy_margin else ol,
+        ] += seg_aug
 
-    return seg_accum / tta, volume_apix
+    segmented_volume /= tta
+    return segmented_volume, volume_apix
