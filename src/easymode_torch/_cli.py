@@ -17,13 +17,13 @@ def main():
     seg.add_argument("--data", nargs="+", type=str, required=True,
                      help="One or more directories, file paths, or glob patterns.")
     seg.add_argument("--tta", type=int, default=4,
-                     help="Test-time augmentation factor, 1-16. Higher = better but slower. (default: 4)")
+                     help="Test-time augmentation factor, 1-16 for 3D, 1-8 for 2D. Higher = better but slower. (default: 4)")
     seg.add_argument("--output", type=str, default="segmented",
                      help="Output directory (default: ./segmented/)")
     seg.add_argument("--overwrite", action='store_true',
                      help="Overwrite existing segmentations.")
     seg.add_argument("--batch", type=int, default=1,
-                     help="Batch size for tile processing (default: 1).")
+                     help="Batch size for tile processing (default: 1). 3D only.")
     seg.add_argument("--gpu", type=int, default=None,
                      help="GPU device ID (default: auto-select).")
     seg.add_argument("--apix", type=float, default=None,
@@ -31,7 +31,11 @@ def main():
     seg.add_argument("--use_depth", type=float, default=1.0,
                      help="Fraction of Z range to process, 0.0-1.0 (default: 1.0).")
     seg.add_argument("--xy_margin", type=int, default=0,
-                     help="Pixels to crop from XY edges (default: 0).")
+                     help="Pixels to crop from XY edges (default: 0). 3D only.")
+    seg.add_argument("--2d", dest='use_2d', action='store_true',
+                     help="Use 2D slice-by-slice model instead of 3D volumetric model.")
+    seg.add_argument("--stride", type=int, default=1,
+                     help="Process every Nth slice (default: 1). 2D only.")
 
     args = parser.parse_args()
 
@@ -40,21 +44,35 @@ def main():
         list_models()
 
     elif args.command == 'segment':
-        from . import segment
         features = [f.lower() for f in args.features]
-        for feature in features:
-            segment(
-                feature=feature,
-                data_directory=args.data,
-                output_directory=args.output,
-                tta=args.tta,
-                batch_size=args.batch,
-                input_apix=args.apix,
-                gpu=args.gpu,
-                overwrite=args.overwrite,
-                use_depth=args.use_depth,
-                xy_margin=args.xy_margin,
-            )
+        if args.use_2d:
+            from . import segment_2d
+            for feature in features:
+                segment_2d(
+                    feature=feature,
+                    data_directory=args.data,
+                    output_directory=args.output,
+                    tta=args.tta,
+                    gpu=args.gpu,
+                    overwrite=args.overwrite,
+                    use_depth=args.use_depth,
+                    stride=args.stride,
+                )
+        else:
+            from . import segment
+            for feature in features:
+                segment(
+                    feature=feature,
+                    data_directory=args.data,
+                    output_directory=args.output,
+                    tta=args.tta,
+                    batch_size=args.batch,
+                    input_apix=args.apix,
+                    gpu=args.gpu,
+                    overwrite=args.overwrite,
+                    use_depth=args.use_depth,
+                    xy_margin=args.xy_margin,
+                )
 
     else:
         parser.print_help()
