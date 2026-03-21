@@ -7,7 +7,7 @@ name = "easymode-torch"
 version = "0.0.1"
 description = "PyTorch inference for easymode pretrained segmentation networks"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 license = { text = "GPL-3.0-or-later" }
 authors = [
     { name = "Mart Last", email = "mgflast@gmail.com" }
@@ -24,11 +24,8 @@ dependencies = [
     "torch>=2.0",
     "mrcfile",
     "numpy",
-    "scipy",
     "huggingface_hub",
     "h5py",
-    "requests",
-    "scikit-image",
 ]
 
 [project.scripts]

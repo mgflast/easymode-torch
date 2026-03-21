@@ -9,7 +9,14 @@ import gc
 import mrcfile
 import numpy as np
 import torch
-from skimage.transform import resize
+import torch.nn.functional as F
+
+def _resize(volume, new_size, antialias=False):
+    """Resize a 3D numpy volume using torch trilinear interpolation."""
+    t = torch.from_numpy(volume[np.newaxis, np.newaxis]).float()
+    t = F.interpolate(t, size=new_size, mode='trilinear', align_corners=False, antialias=antialias)
+    return t.squeeze().numpy()
+
 
 TILE_SIZE = (160, 256, 256)
 OVERLAP = (48, 32, 32)
@@ -158,7 +165,7 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
             int(np.round(scale_xy * ok)),
             int(np.round(scale_xy * ol)),
         ]
-        volume = resize(volume, new_size, order=3, anti_aliasing=True).astype(np.float32)
+        volume = _resize(volume, new_size, antialias=True)
         rescaled = True
 
     # Normalize
@@ -222,12 +229,9 @@ def segment_tomogram(model, tomogram_path, device, tta=1, batch_size=2,
         seg_aug = seg_aug[j0:seg_aug.shape[0] - j1, k0:seg_aug.shape[1] - k1, l0:seg_aug.shape[2] - l1]
 
         if rescaled:
-            seg_aug = resize(
-                seg_aug,
-                (z_end - z_start, ok - 2 * xy_margin, ol - 2 * xy_margin),
-                order=1,
-            )
-            seg_aug = seg_aug[:z_end - z_start, :ok - 2 * xy_margin, :ol - 2 * xy_margin]
+            target = (z_end - z_start, ok - 2 * xy_margin, ol - 2 * xy_margin)
+            seg_aug = _resize(seg_aug, target, antialias=False)
+            seg_aug = seg_aug[:target[0], :target[1], :target[2]]
 
         segmented_volume[
             z_start:z_end,

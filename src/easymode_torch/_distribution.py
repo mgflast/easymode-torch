@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-import requests
+import urllib.request
 from huggingface_hub import hf_hub_download
 
 HF_REPO_ID = "mgflast/easymode"
@@ -23,7 +23,8 @@ def _cache_dir():
 
 def _is_online():
     try:
-        return requests.get("https://huggingface.co", timeout=5).status_code == 200
+        urllib.request.urlopen("https://huggingface.co", timeout=5)
+        return True
     except Exception:
         return False
 
