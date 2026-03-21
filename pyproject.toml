@@ -31,6 +31,9 @@ dependencies = [
 [project.scripts]
 easymode-torch = "easymode_torch._cli:main"
 
+[project.entry-points."torch_segment_tomogram.backends"]
+easymode = "easymode_torch._backend:backend"
+
 [project.urls]
 homepage = "https://github.com/mgflast/easymode-torch"
 repository = "https://github.com/mgflast/easymode-torch"
