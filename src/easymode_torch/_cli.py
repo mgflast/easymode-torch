@@ -32,6 +32,8 @@ def main():
                      help="Fraction of Z range to process, 0.0-1.0 (default: 1.0).")
     seg.add_argument("--xy_margin", type=int, default=0,
                      help="Pixels to crop from XY edges (default: 0). 3D only.")
+    seg.add_argument("--format", type=str, choices=['float32', 'uint16', 'int8'], default='int8',
+                     help="Output format for segmented volumes (default: int8).")
     seg.add_argument("--2d", dest='use_2d', action='store_true',
                      help="Use 2D slice-by-slice model instead of 3D volumetric model.")
     seg.add_argument("--stride", type=int, default=1,
@@ -56,6 +58,7 @@ def main():
                     gpu=args.gpu,
                     overwrite=args.overwrite,
                     silent=False,
+                    data_format=args.format,
                     use_depth=args.use_depth,
                     stride=args.stride,
                 )
@@ -72,6 +75,7 @@ def main():
                     gpu=args.gpu,
                     overwrite=args.overwrite,
                     silent=False,
+                    data_format=args.format,
                     use_depth=args.use_depth,
                     xy_margin=args.xy_margin,
                 )

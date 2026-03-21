@@ -39,9 +39,15 @@ def _collect_tomograms(data_directory):
     return tomograms, patterns
 
 
-def _save_mrc(data, path, voxel_size):
+def _save_mrc(data, path, voxel_size, data_format='int8'):
+    if data_format == 'float32':
+        data = data.astype(np.float32)
+    elif data_format == 'uint16':
+        data = (data * 255).astype(np.uint16)
+    elif data_format == 'int8':
+        data = (data * 127).astype(np.int8)
     with mrcfile.new(str(path), overwrite=True) as m:
-        m.set_data(data.astype(np.float32))
+        m.set_data(data)
         m.voxel_size = voxel_size
 
 
@@ -56,6 +62,7 @@ def segment(
     gpu=None,
     overwrite=False,
     silent=True,
+    data_format='int8',
     use_depth=1.0,
     xy_margin=0,
 ):
@@ -83,6 +90,8 @@ def segment(
     silent : bool
         Suppress all output. Default True (for use as library).
         The CLI sets this to False.
+    data_format : str
+        Output format: 'int8' (default, 0-127), 'uint16' (0-255), or 'float32' (0.0-1.0).
     use_depth : float
         Fraction of the Z range to segment (0.0-1.0).
     xy_margin : int
@@ -117,6 +126,7 @@ def segment(
             f"feature: {feature}\n"
             f"data_patterns: {patterns}\n"
             f"output_directory: {output_directory}\n"
+            f"output_format: {data_format}\n"
             f"device: {device}\n"
             f"tta: {tta}\n"
             f"overwrite: {overwrite}\n"
@@ -152,7 +162,7 @@ def segment(
             model_apix_z=model_apix_z,
             use_depth=use_depth, xy_margin=xy_margin,
         )
-        _save_mrc(seg, out_path, apix)
+        _save_mrc(seg, out_path, apix, data_format)
 
         if not silent:
             elapsed = time.time() - start_time
@@ -176,6 +186,7 @@ def segment_2d(
     gpu=None,
     overwrite=False,
     silent=True,
+    data_format='int8',
     use_depth=1.0,
     stride=1,
 ):
@@ -198,6 +209,8 @@ def segment_2d(
     silent : bool
         Suppress all output. Default True (for use as library).
         The CLI sets this to False.
+    data_format : str
+        Output format: 'int8' (default, 0-127), 'uint16' (0-255), or 'float32' (0.0-1.0).
     use_depth : float
         Fraction of the Z range to segment (0.0-1.0).
     stride : int
@@ -232,6 +245,7 @@ def segment_2d(
             f"feature: {feature}\n"
             f"data_patterns: {patterns}\n"
             f"output_directory: {output_directory}\n"
+            f"output_format: {data_format}\n"
             f"device: {device}\n"
             f"tta: {tta}\n"
             f"overwrite: {overwrite}\n"
@@ -258,7 +272,7 @@ def segment_2d(
             model, tomo_path, device,
             tta=tta, use_depth=use_depth, stride=stride,
         )
-        _save_mrc(seg, out_path, apix)
+        _save_mrc(seg, out_path, apix, data_format)
 
         if not silent:
             elapsed = time.time() - start_time
