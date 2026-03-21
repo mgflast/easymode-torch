@@ -215,19 +215,19 @@ def list_models(silent=False):
 
     models = []
     if not silent:
-        print("\nAvailable segmentation models:")
+        print("\neasymode-torch can currently segment the following features:\n")
     for base in all_bases:
         has_3d = base in h5_bases
         has_2d = base in scnm_bases
         if has_3d and has_2d:
-            dim = "3D / 2D"
+            dim = "3D/2D"
         elif has_3d:
-            dim = "3D"
+            dim = "3D only"
         else:
-            dim = "2D (--2d)"
+            dim = "2D only (--2d)"
 
         if not silent:
-            print(f"  {base.ljust(30)} {dim}")
+            print(f"   > {base.ljust(30)} {dim}")
         models.append({"title": base, "has_3d": has_3d, "has_2d": has_2d})
 
     if not silent:

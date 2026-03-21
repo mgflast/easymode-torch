@@ -11,6 +11,7 @@ Basic usage
 from pathlib import Path
 import glob
 import os
+import time
 
 import mrcfile
 import numpy as np
@@ -22,12 +23,20 @@ from ._model_2d import UNet2D
 from ._utils import get_device
 
 
-def _load_model(pth_path, device):
-    model = UNet()
-    state = torch.load(pth_path, map_location='cpu', weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    return model.to(device)
+def _collect_tomograms(data_directory):
+    if isinstance(data_directory, (list, tuple)):
+        patterns = list(data_directory)
+    else:
+        patterns = [str(data_directory)]
+
+    tomograms = []
+    for p in patterns:
+        if os.path.isdir(p):
+            tomograms.extend(glob.glob(os.path.join(p, '*.mrc')))
+        else:
+            tomograms.extend(glob.glob(p))
+    tomograms = [f for f in sorted(set(tomograms)) if os.path.splitext(f)[-1] == '.mrc']
+    return tomograms, patterns
 
 
 def _save_mrc(data, path, voxel_size):
@@ -41,16 +50,16 @@ def segment(
     data_directory,
     output_directory='segmented',
     *,
-    tta=1,
-    batch_size=2,
+    tta=4,
+    batch_size=1,
     input_apix=None,
     gpu=None,
     overwrite=False,
-    silent=False,
+    silent=True,
     use_depth=1.0,
     xy_margin=0,
 ):
-    """Segment tomograms using a pretrained easymode model.
+    """Segment tomograms using a pretrained easymode 3D model.
 
     Parameters
     ----------
@@ -63,70 +72,78 @@ def segment(
         Where to write output segmentation .mrc files.
     tta : int
         Test-time augmentation passes (1 = none, up to 16).
-        More passes = better quality, slower.
     batch_size : int
-        Number of tiles to process in parallel. Reduce if you run out of GPU memory.
+        Number of tiles to process in parallel.
     input_apix : float or None
         Override the pixel size from the MRC header (Å/px).
     gpu : int or None
-        GPU device ID. None = auto-select (GPU if available, else CPU).
+        GPU device ID. None = auto-select.
     overwrite : bool
         Re-segment tomograms that already have output files.
     silent : bool
-        Suppress progress output.
+        Suppress all output. Default True (for use as library).
+        The CLI sets this to False.
     use_depth : float
-        Fraction of the Z range to segment (0.0–1.0). Default 1.0 = full volume.
+        Fraction of the Z range to segment (0.0-1.0).
     xy_margin : int
-        Pixels to crop from XY edges before segmenting (in original coords).
+        Pixels to crop from XY edges before segmenting.
     """
     from ._inference import segment_tomogram
 
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    # Collect tomograms
-    if isinstance(data_directory, (list, tuple)):
-        patterns = list(data_directory)
-    else:
-        patterns = [str(data_directory)]
-
-    tomograms = []
-    for p in patterns:
-        if os.path.isdir(p):
-            tomograms.extend(glob.glob(os.path.join(p, '*.mrc')))
-        else:
-            tomograms.extend(glob.glob(p))
-    tomograms = sorted(set(f for f in tomograms if f.endswith('.mrc')))
+    tomograms, patterns = _collect_tomograms(data_directory)
 
     if not tomograms:
-        print(f"No .mrc files found in {patterns}")
+        if not silent:
+            print(f"No .mrc files found in {patterns}")
         return
 
-    if not silent:
-        print(f"easymode-torch segment\n  feature: {feature}\n  tomograms: {len(tomograms)}")
+    device = get_device(gpu)
 
     # Download/convert weights
     pth_path, metadata = get_model_weights(feature, silent=silent)
+    if pth_path is None:
+        if not silent:
+            print(f"Could not find model for {feature}! Exiting.")
+        return
     model_apix = metadata["apix"] if metadata else 10.0
     model_apix_z = metadata.get("apix_z") if metadata else None
 
-    device = get_device(gpu)
     if not silent:
-        print(f"  device: {device}  model_apix: {model_apix} Å/px")
+        print(
+            f"easymode-torch segment\n"
+            f"feature: {feature}\n"
+            f"data_patterns: {patterns}\n"
+            f"output_directory: {output_directory}\n"
+            f"device: {device}\n"
+            f"tta: {tta}\n"
+            f"overwrite: {overwrite}\n"
+            f"batch_size: {batch_size}\n"
+        )
 
-    model = _load_model(pth_path, device)
+        if model_apix_z is not None:
+            print(f"Using model: {pth_path}, inference at {model_apix} Å/px (XY) / {model_apix_z} Å/px (Z). \n")
+        else:
+            print(f"Using model: {pth_path}, inference at {model_apix} Å/px. \n")
+
+        print(f"Found {len(tomograms)} tomograms to segment. \n")
+
+    model = UNet()
+    state = torch.load(pth_path, map_location='cpu', weights_only=True)
+    model.load_state_dict(state)
+    model.eval()
+    model = model.to(device)
+
+    start_time = time.time()
 
     for i, tomo_path in enumerate(tomograms, 1):
         tomo_name = os.path.splitext(os.path.basename(tomo_path))[0]
         out_path = output_directory / f"{tomo_name}__{feature}.mrc"
 
         if out_path.exists() and not overwrite:
-            if not silent:
-                print(f"  [{i}/{len(tomograms)}] skipping {tomo_name} (already exists)")
             continue
-
-        if not silent:
-            print(f"  [{i}/{len(tomograms)}] {tomo_name}")
 
         seg, apix = segment_tomogram(
             model, tomo_path, device,
@@ -137,8 +154,17 @@ def segment(
         )
         _save_mrc(seg, out_path, apix)
 
+        if not silent:
+            elapsed = time.time() - start_time
+            eta = time.strftime('%H:%M:%S', time.gmtime(elapsed / i * (len(tomograms) - i)))
+            avg_secs = int(elapsed / i)
+            per_tomo = f"{avg_secs // 60:02d}:{avg_secs % 60:02d}"
+            print(f"{i}/{len(tomograms)} (on {device}) - {feature} - {os.path.basename(tomo_path)} - eta {eta} ({per_tomo} per tomo)")
+
     if not silent:
-        print(f"\nDone. Results in {output_directory}/")
+        print()
+        print(f"\033[92mSegmentation finished!\033[0m")
+        print()
 
 
 def segment_2d(
@@ -149,7 +175,7 @@ def segment_2d(
     tta=4,
     gpu=None,
     overwrite=False,
-    silent=False,
+    silent=True,
     use_depth=1.0,
     stride=1,
 ):
@@ -170,7 +196,8 @@ def segment_2d(
     overwrite : bool
         Re-segment tomograms that already have output files.
     silent : bool
-        Suppress progress output.
+        Suppress all output. Default True (for use as library).
+        The CLI sets this to False.
     use_depth : float
         Fraction of the Z range to segment (0.0-1.0).
     stride : int
@@ -178,36 +205,39 @@ def segment_2d(
     """
     from ._inference_2d import segment_tomogram_2d
 
+    tta = max(tta, 4)
+
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    # Collect tomograms
-    if isinstance(data_directory, (list, tuple)):
-        patterns = list(data_directory)
-    else:
-        patterns = [str(data_directory)]
-
-    tomograms = []
-    for p in patterns:
-        if os.path.isdir(p):
-            tomograms.extend(glob.glob(os.path.join(p, '*.mrc')))
-        else:
-            tomograms.extend(glob.glob(p))
-    tomograms = sorted(set(f for f in tomograms if f.endswith('.mrc')))
+    tomograms, patterns = _collect_tomograms(data_directory)
 
     if not tomograms:
-        print(f"No .mrc files found in {patterns}")
+        if not silent:
+            print(f"No .mrc files found in {patterns}")
         return
 
-    if not silent:
-        print(f"easymode-torch segment (2D)\n  feature: {feature}\n  tomograms: {len(tomograms)}")
+    device = get_device(gpu)
 
     # Download/convert weights
     pth_path, metadata, scnm_metadata = get_model_weights_2d(feature, silent=silent)
+    if pth_path is None:
+        if not silent:
+            print(f"Could not find model for {feature}! Exiting.")
+        return
 
-    device = get_device(gpu)
     if not silent:
-        print(f"  device: {device}")
+        print(
+            f"easymode-torch segment\n"
+            f"feature: {feature}\n"
+            f"data_patterns: {patterns}\n"
+            f"output_directory: {output_directory}\n"
+            f"device: {device}\n"
+            f"tta: {tta}\n"
+            f"overwrite: {overwrite}\n"
+            f"2d_model: True\n"
+        )
+        print(f"Found {len(tomograms)} tomograms to segment.\n")
 
     model = UNet2D()
     state = torch.load(pth_path, map_location='cpu', weights_only=True)
@@ -215,17 +245,14 @@ def segment_2d(
     model.eval()
     model = model.to(device)
 
+    start_time = time.time()
+
     for i, tomo_path in enumerate(tomograms, 1):
         tomo_name = os.path.splitext(os.path.basename(tomo_path))[0]
         out_path = output_directory / f"{tomo_name}__{feature}.mrc"
 
         if out_path.exists() and not overwrite:
-            if not silent:
-                print(f"  [{i}/{len(tomograms)}] skipping {tomo_name} (already exists)")
             continue
-
-        if not silent:
-            print(f"  [{i}/{len(tomograms)}] {tomo_name}")
 
         seg, apix = segment_tomogram_2d(
             model, tomo_path, device,
@@ -233,8 +260,17 @@ def segment_2d(
         )
         _save_mrc(seg, out_path, apix)
 
+        if not silent:
+            elapsed = time.time() - start_time
+            eta = time.strftime('%H:%M:%S', time.gmtime(elapsed / i * (len(tomograms) - i)))
+            avg_secs = int(elapsed / i)
+            per_tomo = f"{avg_secs // 60:02d}:{avg_secs % 60:02d}"
+            print(f"{i}/{len(tomograms)} (on {device}) - {feature} - {os.path.basename(tomo_path)} - eta {eta} ({per_tomo} per tomo)")
+
     if not silent:
-        print(f"\nDone. Results in {output_directory}/")
+        print()
+        print(f"\033[92mSegmentation finished!\033[0m")
+        print()
 
 
 __all__ = ['segment', 'segment_2d', 'list_models']

@@ -55,6 +55,7 @@ def main():
                     tta=args.tta,
                     gpu=args.gpu,
                     overwrite=args.overwrite,
+                    silent=False,
                     use_depth=args.use_depth,
                     stride=args.stride,
                 )
@@ -70,6 +71,7 @@ def main():
                     input_apix=args.apix,
                     gpu=args.gpu,
                     overwrite=args.overwrite,
+                    silent=False,
                     use_depth=args.use_depth,
                     xy_margin=args.xy_margin,
                 )
